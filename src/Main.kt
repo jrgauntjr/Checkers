@@ -9,6 +9,8 @@ sealed class Piece(val player: Player) {
 
 class CheckersBoard {
     private val board: Array<Array<Piece?>> = Array(8) { arrayOfNulls(8) }
+    var currentPlayer: Player = Player.RED
+    private var mustContinueJumping: Position? = null
 
     init {
         setupBoard()
@@ -29,38 +31,129 @@ class CheckersBoard {
     fun movePiece(from: Position, to: Position): Boolean {
         val piece = board[from.row][from.col] ?: return false
 
-        // Simple move validation
+        if (piece.player != currentPlayer || (mustContinueJumping != null && mustContinueJumping != from)) return false
         if (!isValidMove(from, to, piece)) return false
 
-        board[to.row][to.col] = piece
+        val capturedPiecePos = getCapturedPiecePosition(from, to)
+        if (capturedPiecePos != null) board[capturedPiecePos.row][capturedPiecePos.col] = null
+
+        val newPiece = convertToKing(to, piece) ?: piece
+        board[to.row][to.col] = newPiece
         board[from.row][from.col] = null
+
+        if (capturedPiecePos != null && hasJumpMove(to, newPiece)) {
+            mustContinueJumping = to
+        } else {
+            mustContinueJumping = null
+            switchTurn()
+        }
         return true
+    }
+
+    private fun switchTurn() {
+        currentPlayer = if (currentPlayer == Player.RED) Player.BLACK else Player.RED
     }
 
     private fun isValidMove(from: Position, to: Position, piece: Piece): Boolean {
         val rowDiff = to.row - from.row
         val colDiff = to.col - from.col
 
-        // Ensure diagonal movement
         if (kotlin.math.abs(rowDiff) != kotlin.math.abs(colDiff)) return false
+        if (board[to.row][to.col] != null) return false
 
-        // Ensure correct movement direction
         if (piece is Piece.Normal) {
             val direction = if (piece.player == Player.RED) 1 else -1
             if (rowDiff != direction && kotlin.math.abs(rowDiff) != 2) return false
         }
 
-        return board[to.row][to.col] == null
+        if (kotlin.math.abs(rowDiff) == 2) {
+            val capturedPiecePos = getCapturedPiecePosition(from, to)
+            val capturedPiece = capturedPiecePos?.let { board[it.row][it.col] }
+            if (capturedPiece == null || capturedPiece.player == piece.player) return false
+        }
+        return true
+    }
+
+    private fun getCapturedPiecePosition(from: Position, to: Position): Position? {
+        return if (kotlin.math.abs(from.row - to.row) == 2) {
+            Position((from.row + to.row) / 2, (from.col + to.col) / 2)
+        } else null
+    }
+
+    private fun convertToKing(to: Position, piece: Piece): Piece? {
+        return if (piece is Piece.Normal && ((piece.player == Player.RED && to.row == 7) || (piece.player == Player.BLACK && to.row == 0))) {
+            Piece.King(piece.player)
+        } else null
+    }
+
+    private fun hasJumpMove(pos: Position, piece: Piece): Boolean {
+        val directions = listOf(-2 to -2, -2 to 2, 2 to -2, 2 to 2)
+        return directions.any { (rowDiff, colDiff) ->
+            val newPos = Position(pos.row + rowDiff, pos.col + colDiff)
+            newPos.row in 0..7 && newPos.col in 0..7 && isValidMove(pos, newPos, piece)
+        }
+    }
+
+    fun isGameOver(): Boolean {
+        return board.flatten().filterNotNull().none { it.player == currentPlayer && hasMove(it) }
+    }
+
+    private fun hasMove(piece: Piece): Boolean {
+        for (row in 0..7) {
+            for (col in 0..7) {
+                val pos = Position(row, col)
+                if (board[row][col] == piece) {
+                    val directions = listOf(-1 to -1, -1 to 1, 1 to -1, 1 to 1, -2 to -2, -2 to 2, 2 to -2, 2 to 2)
+                    if (directions.any { (rowDiff, colDiff) ->
+                            val newPos = Position(row + rowDiff, col + colDiff)
+                            newPos.row in 0..7 && newPos.col in 0..7 && isValidMove(pos, newPos, piece)
+                        }) return true
+                }
+            }
+        }
+        return false
     }
 
     fun displayBoard() {
-        for (row in board) {
-            println(row.joinToString(" ") { piece -> piece?.player?.name?.first()?.toString() ?: "." })
+
+        println("Current Player: $currentPlayer")
+        println("  0 1 2 3 4 5 6 7")
+        for ((index, row) in board.withIndex()) {
+            print("$index ")
+            println(row.joinToString(" ") { piece -> when (piece) {
+                is Piece.Normal -> if (piece.player == Player.RED) "r" else "b"
+                is Piece.King -> if (piece.player == Player.RED) "R" else "B"
+                else -> "."
+            } })
         }
     }
 }
 
+fun clearConsole() {
+    repeat(50) { println() }
+}
+
 fun main() {
     val game = CheckersBoard()
-    game.displayBoard()
+    while (true) {
+        game.displayBoard()
+        if (game.isGameOver()) {
+            println("Game over! ${if (game.currentPlayer == Player.RED) "Black" else "Red"} wins!")
+            break
+        }
+        println("Enter move (e.g., '2 3 3 4') or 'q' to quit: ")
+        val input = readlnOrNull()?.trim() ?: break
+        if (input == "q") break
+        val coords = input.split(" ").mapNotNull { it.toIntOrNull() }
+        if (coords.size == 4) {
+            if (game.movePiece(Position(coords[0], coords[1]), Position(coords[2], coords[3]))) {
+                clearConsole()
+                println("Move successful!")
+            } else {
+                println("Invalid move, try again.")
+            }
+        } else {
+            println("Invalid input format.")
+        }
+    }
 }
